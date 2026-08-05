@@ -1,0 +1,13 @@
+interface:
+  display_name: 裸眼故障海报设计
+  short_description: 生成具有强烈裸眼纵深、故障杂志质感和文字冲屏效果的高冲击海报
+  default_prompt: 使用 $HeiGe-poster-lab 为我的主题设计一张具有裸眼纵深和故障杂志感的海报。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
