@@ -13,6 +13,22 @@
   - 第三方 API：`scripts/gen.py` + `scripts/edit.py`，支持 gpt-image-2 等任意 OpenAI 兼容接口
 - **规格文件驱动**：每个任务先落 `prompts/NN-主题.md`，prompt 不漂移，改图可复现。
 
+## 效果示例
+
+由本 skill 生成的裸眼故障海报样张：
+
+### 一句话，把 Crush 变成宠物！
+
+![Crush](examples/02-Crush.png)
+
+### 凌晨三点的代码还在跑
+
+![凌晨三点](examples/03-凌晨三点.png)
+
+### 咖啡凉了，方案没过
+
+![咖啡凉了](examples/04-咖啡凉了.png)
+
 ## 文件结构
 
 ```
@@ -27,6 +43,7 @@ HeiGe-poster-lab/
 ├── assets/
 │   ├── approved-reference.png  # 官方风格锚点参考图
 │   └── icon.svg
+├── examples/                   # 示例输出海报
 ├── references/
 │   ├── visual-dna.md           # 视觉 DNA：层、色板、字体、构图
 │   └── prompt-blueprint.md     # 英文 prompt 模板
