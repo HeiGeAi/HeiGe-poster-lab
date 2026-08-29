@@ -167,11 +167,24 @@ def validate_output_path(output_path: str | Path) -> Path:
         raise OutputPathError(f"输出路径不能是符号链接: {requested}")
 
     absolute_parent = Path(os.path.abspath(requested.parent))
-    if absolute_parent.resolve(strict=False) != absolute_parent:
-        raise OutputPathError(f"输出父目录不能包含符号链接: {requested.parent}")
+    resolved_parent = absolute_parent.resolve(strict=False)
+    if resolved_parent != absolute_parent:
+        allowed_system_alias = False
+        for alias_name in ("/tmp", "/var/tmp"):
+            alias = Path(alias_name)
+            try:
+                relative = absolute_parent.relative_to(alias)
+                canonical_alias = alias.resolve(strict=True)
+            except (OSError, ValueError):
+                continue
+            if canonical_alias != alias and resolved_parent == canonical_alias / relative:
+                allowed_system_alias = True
+                break
+        if not allowed_system_alias:
+            raise OutputPathError(f"输出父目录不能包含符号链接: {requested.parent}")
     absolute_parent.mkdir(parents=True, exist_ok=True)
     real_parent = absolute_parent.resolve(strict=True)
-    if real_parent != absolute_parent:
+    if real_parent != resolved_parent:
         raise OutputPathError(f"输出父目录不能包含符号链接: {requested.parent}")
     if not real_parent.is_dir():
         raise OutputPathError(f"输出父目录不是目录: {real_parent}")
