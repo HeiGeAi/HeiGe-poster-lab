@@ -90,6 +90,7 @@ SUPPORTED_IMAGE_FORMATS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_SIZE_MB = 10
 TIMEOUT_SECONDS = 600
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+DEFAULT_MAX_N = 6
 
 _print_lock = threading.Lock()
 
@@ -459,17 +460,20 @@ def edit_batch(
     results = [None] * num_tasks
 
     def _run_task(index: int, task: dict) -> tuple:
-        result = _edit_core(
-            input_image=task["input"],
-            prompt=task["prompt"],
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            aspect_ratio=task.get("aspect_ratio", "1:1"),
-            output_path=task["output"],
-            max_retries=max_retries,
-            task_label=f"#{index + 1}",
-        )
+        try:
+            result = _edit_core(
+                input_image=task["input"],
+                prompt=task["prompt"],
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                aspect_ratio=task.get("aspect_ratio", "1:1"),
+                output_path=task["output"],
+                max_retries=max_retries,
+                task_label=f"#{index + 1}",
+            )
+        except Exception as e:
+            result = {"success": False, "error": f"任务异常: {e}"}
         result["index"] = index
         return index, result
 
@@ -547,7 +551,15 @@ def main():
         help="每个任务的最大重试次数（默认: 3）",
     )
 
+    parser.add_argument(
+        "--max-n", type=int, default=DEFAULT_MAX_N, metavar="N",
+        help=f"成本护栏：单次最多编辑几张，超了直接拦（默认: {DEFAULT_MAX_N}）",
+    )
+
     args = parser.parse_args()
+
+    if args.max_n <= 0:
+        parser.error("--max-n 必须是正整数")
 
     if args.batch:
         if args.input or args.prompt:
@@ -564,6 +576,27 @@ def main():
         if not isinstance(tasks, list) or not tasks:
             print("错误: 批量任务文件必须是非空 JSON 数组", file=sys.stderr)
             sys.exit(1)
+
+        if len(tasks) > args.max_n:
+            print(
+                f"错误: 批量任务 {len(tasks)} 张超过成本护栏上限 --max-n={args.max_n}。\n"
+                "  要么拆批，要么显式调高 --max-n（明确知道在烧多少钱再调）。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        for i, t in enumerate(tasks):
+            if "input" not in t or "prompt" not in t or "output" not in t:
+                print(f"错误: 任务 #{i + 1} 缺少必填字段 input、prompt 或 output", file=sys.stderr)
+                sys.exit(1)
+            ar = t.get("aspect_ratio")
+            if ar is not None and ar not in VALID_ASPECT_RATIOS:
+                print(
+                    f"错误: 任务 #{i + 1} 的 aspect_ratio 非法: {ar!r}，"
+                    f"可选值: {', '.join(VALID_ASPECT_RATIOS)}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
         config = _load_self_config()
         base_url = resolve_base_url(args.base_url, config)
