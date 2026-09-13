@@ -70,6 +70,7 @@ mkdir -p ~/.HeiGe-poster-lab
 cat > ~/.HeiGe-poster-lab/config.json <<EOF
 {"base_url": "https://api.openai.com/v1", "api_key": "sk-xxx", "model": "gpt-image-2"}
 EOF
+chmod 600 ~/.HeiGe-poster-lab/config.json  # 文件含 API key，禁止同机其他用户读
 ```
 
 也支持环境变量：

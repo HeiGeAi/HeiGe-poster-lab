@@ -25,6 +25,7 @@ import json
 import math
 import mimetypes
 import os
+import stat
 import sys
 import threading
 import time
@@ -127,6 +128,16 @@ def _resolve_size(aspect_ratio: str, tag: str = "") -> str:
 def _load_config(path: Path) -> dict:
     if not path.exists():
         return {}
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        if mode & 0o077:
+            print(
+                f"警告: 配置文件 {path} 权限 {mode:03o} 过宽，同机其他用户可读 API key，"
+                f"建议执行: chmod 600 {path}",
+                file=sys.stderr,
+            )
+    except OSError:
+        pass
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
