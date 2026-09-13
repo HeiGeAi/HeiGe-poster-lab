@@ -27,6 +27,7 @@ import argparse
 import base64
 import binascii
 import json
+import math
 import os
 import re
 import sys
@@ -111,6 +112,26 @@ _print_lock = threading.Lock()
 def _safe_print(msg, *, file=None):
     with _print_lock:
         print(msg, file=file or sys.stdout, flush=True)
+
+def _resolve_size(aspect_ratio: str, tag: str = "") -> str:
+    """把宽高比映射到 API 三档物理尺寸；近似映射时显式提示，不静默误导。"""
+    size = ASPECT_SIZE_MAP.get(aspect_ratio, "1024x1024")
+    w, h = (int(x) for x in size.split("x"))
+    g = math.gcd(w, h)
+    actual = f"{w // g}:{h // g}"
+    try:
+        a, b = (float(x) for x in aspect_ratio.split(":"))
+        mismatch = abs(a / b - w / h) > 1e-6
+    except (ValueError, ZeroDivisionError):
+        mismatch = True
+    if mismatch:
+        _safe_print(
+            f"{tag} 提示: 宽高比 {aspect_ratio} 超出 API 三档物理尺寸"
+            "（1024x1024 / 1536x1024 / 1024x1536），"
+            f"近似映射为 {actual}（{size}）"
+        )
+    return size
+
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +334,7 @@ def _generate_core(
         output_path = str(validate_output_path(output_path))
     except (OSError, OutputPathError) as e:
         return {"success": False, "error": f"输出路径校验失败: {e}"}
-    resolved_size = ASPECT_SIZE_MAP.get(aspect_ratio, "1024x1024")
+    resolved_size = _resolve_size(aspect_ratio, tag)
 
     payload = {
         "model": model,

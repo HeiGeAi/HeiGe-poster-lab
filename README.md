@@ -95,6 +95,8 @@ python3 scripts/gen.py --prompt "完整英文 prompt" -ar 16:9 -o outimage/test.
 python3 scripts/gen.py --batch tasks.json --workers 2
 ```
 
+> 宽高比说明：第三方 API 只有三档物理尺寸（1024x1024 / 1536x1024 / 1024x1536）。1:1 / 3:2 / 2:3 精确匹配；其余比例（含 2.35:1、16:9、21:9 等）会近似映射到最近档位，并在日志中显式提示实际尺寸。
+
 ### 4. 图生图 / 编辑
 
 ```bash
