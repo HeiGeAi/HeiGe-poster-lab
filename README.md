@@ -121,7 +121,7 @@ python3 scripts/edit.py --input scene.jpg --input face.jpg --prompt "以图1为�
 
 ## 配置优先级
 
-命令行参数 > 环境变量 > `~/.HeiGe-poster-lab/config.json` > `~/.heige-image/config.json` > 默认值。
+命令行参数 > 环境变量 > `~/.HeiGe-poster-lab/config.json` > `~/.heige-image/config.json` > 默认值。注意：仅当本 skill 配置未设置（或显式写成 OpenAI 官方默认值）时，才会 fallback 读取 heige-image 配置；base_url 显式写了其他值时以本 skill 配置为准。
 
 ## 协议
 
