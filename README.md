@@ -83,6 +83,8 @@ export HEIGE_POSTER_LAB_MODEL=gpt-image-2
 
 如果已经配过 [heige-image](https://github.com/HeiGeAi/heige-image)，本 skill 会自动 fallback 读取 `~/.heige-image/config.json`，无需重复填 key。
 
+> 安全提示：config.json 里的 base_url 请只填你信任的端点。脚本只接受 https 图片下载地址，但恶意端点仍可能返回误导内容。
+
 ### 3. 出图
 
 ```bash

@@ -36,6 +36,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlparse
 
 try:
     import httpx
@@ -328,6 +329,15 @@ def _request_once(payload: dict, timeout: int, api_key: str, base_url: str) -> h
         )
 
 
+def _validate_download_url(url: str) -> None:
+    """图片下载只允许 https，拦截明文 http 与 file:// 等 scheme（SSRF 缓解）。"""
+    scheme = urlparse(url).scheme.lower()
+    if scheme != "https":
+        raise ImageResponseError(
+            f"图片下载地址必须使用 https，实际为 {scheme or '（无 scheme）'}://，已拒绝下载"
+        )
+
+
 def _generate_core(
     prompt: str,
     api_key: str,
@@ -412,7 +422,9 @@ def _generate_core(
     if image_url:
         _safe_print(f"{tag} 下载图片 from: {image_url}")
         try:
+            _validate_download_url(image_url)
             with httpx.stream("GET", image_url, timeout=60, follow_redirects=True) as img_resp:
+                _validate_download_url(str(img_resp.url))
                 img_resp.raise_for_status()
                 image_bytes = validate_image_response(img_resp)
         except (httpx.HTTPError, ImageResponseError) as e:
