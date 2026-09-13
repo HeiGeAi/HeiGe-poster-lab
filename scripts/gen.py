@@ -84,10 +84,12 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outimage"
 VALID_ASPECT_RATIOS = [
     "1:1", "16:9", "9:16", "4:3", "3:4",
     "3:2", "2:3", "21:9", "5:4", "4:5",
+    "2.35:1",
 ]
 
 ASPECT_SIZE_MAP = {
     "1:1": "1024x1024",
+    "2.35:1": "1536x1024",
     "16:9": "1536x1024",
     "9:16": "1024x1536",
     "4:3": "1536x1024",
@@ -221,14 +223,21 @@ _FENCED_BLOCK = re.compile(r"```[a-zA-Z0-9_-]*\n(.*?)```", re.DOTALL)
 
 def _extract_aspect_from_spec(text: str) -> str | None:
     m = re.search(
-        r"(?:比例|宽高比|aspect[\s_-]*ratio)\s*[:：]\s*([0-9]+\s*[:：]\s*[0-9]+)",
+        r"(?:比例|宽高比|aspect[\s_-]*ratio)\s*[:：]\s*([0-9]+(?:\.[0-9]+)?\s*[:：]\s*[0-9]+(?:\.[0-9]+)?)",
         text,
         re.IGNORECASE,
     )
     if not m:
         return None
     ratio = re.sub(r"\s+", "", m.group(1)).replace("：", ":")
-    return ratio if ratio in VALID_ASPECT_RATIOS else None
+    if ratio not in VALID_ASPECT_RATIOS:
+        print(
+            f"警告: 规格声明的比例 {ratio} 不在支持列表（{', '.join(VALID_ASPECT_RATIOS)}），"
+            "回退为默认 1:1。",
+            file=sys.stderr,
+        )
+        return None
+    return ratio
 
 
 def parse_spec(spec_path: str) -> dict:
