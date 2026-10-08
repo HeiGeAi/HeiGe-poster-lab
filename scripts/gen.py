@@ -52,6 +52,7 @@ try:
         validate_image_bytes,
         validate_image_response,
         validate_output_path,
+        preflight_batch_outputs,
     )
 except ImportError:
     from image_output import (
@@ -61,6 +62,7 @@ except ImportError:
         validate_image_bytes,
         validate_image_response,
         validate_output_path,
+        preflight_batch_outputs,
     )
 
 # ---------------------------------------------------------------------------
@@ -168,78 +170,42 @@ def _load_fallback_config() -> dict:
     return _load_config(HEIGE_CONFIG_FILE)
 
 
+def _provider_values(cli_base=None, cli_key=None, cli_model=None, config=None):
+    """Select one provider family; never borrow credentials across providers."""
+    config = _load_self_config() if config is None else config
+    fields = ("base_url", "api_key", "model")
+
+    def first_value(*values):
+        return next((value.strip() for value in values if isinstance(value, str) and value.strip()), "")
+
+    own = [first_value(cli, os.environ.get("HEIGE_POSTER_LAB_" + field.upper()), config.get(field))
+           for cli, field in zip((cli_base, cli_key, cli_model), fields)]
+    if not any(own):
+        fallback = _load_fallback_config()
+        own = [first_value(os.environ.get("HEIGE_IMAGE_" + field.upper()), fallback.get(field))
+               for field in fields]
+    base, key, model = own
+    return (base or DEFAULT_BASE_URL).rstrip("/"), key, model or DEFAULT_MODEL
+
+
+def resolve_provider(cli_base=None, cli_key=None, cli_model=None, config=None):
+    values = _provider_values(cli_base, cli_key, cli_model, config)
+    if not values[1]:
+        print("错误: 所选服务缺少 API Key，请配置 HEIGE_POSTER_LAB_API_KEY 或 --api-key", file=sys.stderr)
+        sys.exit(1)
+    return values
+
+
 def resolve_api_key(cli_key: str | None = None, config: dict | None = None) -> str:
-    if cli_key:
-        return cli_key.strip()
-
-    env_key = os.environ.get("HEIGE_POSTER_LAB_API_KEY", "").strip()
-    if env_key:
-        return env_key
-
-    if config is None:
-        config = _load_self_config()
-    file_key = (config.get("api_key") or "").strip()
-    if file_key:
-        return file_key
-
-    # fallback: heige-image 的环境变量和配置文件
-    env_key = os.environ.get("HEIGE_IMAGE_API_KEY", "").strip()
-    if env_key:
-        return env_key
-
-    fallback_config = _load_fallback_config()
-    file_key = (fallback_config.get("api_key") or "").strip()
-    if file_key:
-        return file_key
-
-    print(
-        "错误: 未找到 API Key。请通过以下方式之一配置:\n"
-        f"  1. 写配置文件 {CONFIG_FILE}，内容: "
-        '{"base_url": "https://api.openai.com/v1", "api_key": "sk-xxx", "model": "gpt-image-2"}\n'
-        "  2. 设置环境变量 HEIGE_POSTER_LAB_API_KEY=sk-xxx\n"
-        "  3. 使用 --api-key sk-xxx 命令行参数\n"
-        "  4. 复用 heige-image 配置: 写入 ~/.heige-image/config.json 或设置 HEIGE_IMAGE_API_KEY",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    return resolve_provider(cli_key=cli_key, config=config)[1]
 
 
 def resolve_base_url(cli_base_url: str | None = None, config: dict | None = None) -> str:
-    if cli_base_url:
-        base = cli_base_url.strip()
-    elif os.environ.get("HEIGE_POSTER_LAB_BASE_URL", "").strip():
-        base = os.environ["HEIGE_POSTER_LAB_BASE_URL"].strip()
-    else:
-        if config is None:
-            config = _load_self_config()
-        base = (config.get("base_url") or "").strip() or DEFAULT_BASE_URL
-
-    if base == DEFAULT_BASE_URL and not os.environ.get("HEIGE_POSTER_LAB_BASE_URL"):
-        # 还没确定时，看看 fallback
-        fallback_config = _load_fallback_config()
-        fallback_base = (fallback_config.get("base_url") or "").strip()
-        env_fallback = os.environ.get("HEIGE_IMAGE_BASE_URL", "").strip()
-        base = env_fallback or fallback_base or base
-
-    return base.rstrip("/")
+    return _provider_values(cli_base=cli_base_url, config=config)[0]
 
 
 def resolve_model(cli_model: str | None = None, config: dict | None = None) -> str:
-    if cli_model:
-        return cli_model.strip()
-    env_model = os.environ.get("HEIGE_POSTER_LAB_MODEL", "").strip()
-    if env_model:
-        return env_model
-    if config is None:
-        config = _load_self_config()
-    self_model = (config.get("model") or "").strip()
-    if self_model:
-        return self_model
-
-    fallback_config = _load_fallback_config()
-    env_fallback = os.environ.get("HEIGE_IMAGE_MODEL", "").strip()
-    fallback_model = (fallback_config.get("model") or "").strip()
-    return env_fallback or fallback_model or DEFAULT_MODEL
+    return _provider_values(cli_model=cli_model, config=config)[2]
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +352,7 @@ def _generate_core(
             last_error = "请求超时"
             _safe_print(f"{tag} 请求超时", file=sys.stderr)
             continue
-        except httpx.ConnectError as e:
+        except httpx.HTTPError as e:
             last_error = f"连接失败: {e}"
             _safe_print(f"{tag} 连接失败: {e}", file=sys.stderr)
             continue
@@ -415,9 +381,18 @@ def _generate_core(
     else:
         return {"success": False, "error": f"重试 {max_retries} 次仍然失败。最后错误: {last_error}"}
 
-    data = resp.json()
-    image_url = data.get("data", [{}])[0].get("url")
-    b64_data = data.get("data", [{}])[0].get("b64_json")
+    try:
+        data = resp.json()
+    except ValueError:
+        return {"success": False, "error": "API 响应体不是有效 JSON"}
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+        return {"success": False, "error": "API 响应缺少有效的 data 列表"}
+    image_url = items[0].get("url")
+    b64_data = items[0].get("b64_json")
+    if ((image_url is not None and not isinstance(image_url, str))
+            or (b64_data is not None and not isinstance(b64_data, str))):
+        return {"success": False, "error": "API 图片字段必须是字符串"}
 
     if image_url:
         _safe_print(f"{tag} 下载图片 from: {image_url}")
@@ -486,6 +461,11 @@ def generate_batch(
     workers: int = 0,
     max_retries: int = 3,
 ) -> list:
+    try:
+        tasks = preflight_batch_outputs(tasks)
+    except (OSError, ValueError, TypeError) as exc:
+        return [{"success": False, "index": i, "error": f"批量输出校验失败: {exc}"}
+                for i in range(len(tasks))]
     num_tasks = len(tasks)
 
     if workers <= 0:
@@ -517,7 +497,11 @@ def generate_batch(
             for i, t in enumerate(tasks)
         }
         for future in as_completed(futures):
-            idx, result = future.result()
+            idx = futures[future]
+            try:
+                _, result = future.result()
+            except Exception as exc:
+                result = {"success": False, "index": idx, "error": f"任务异常: {exc}"}
             results[idx] = result
             status = "OK" if result["success"] else "FAIL"
             _safe_print(f"[HeiGe-poster-lab 批量] 任务 #{idx + 1} {status}")
@@ -602,9 +586,7 @@ def main():
         parser.error("--max-n 必须是正整数")
 
     config = _load_self_config()
-    base_url = resolve_base_url(args.base_url, config)
-    api_key = resolve_api_key(args.api_key, config)
-    model = resolve_model(args.model, config)
+    base_url, api_key, model = resolve_provider(args.base_url, args.api_key, args.model, config)
 
     if args.batch:
         batch_path = Path(args.batch)
