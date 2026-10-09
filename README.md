@@ -63,6 +63,8 @@ HeiGe-poster-lab/
 pip install -r requirements.txt
 ```
 
+依赖包括 httpx 与 Pillow。输出只接受静态非隔行 PNG：最多 20 MiB 文件、3200 万像素、128 MiB 解压扫描行数据。结构、CRC、扫描行过滤器及完整像素解码均通过后才原子写入；损坏图片、JPEG/WebP/GIF、动画 PNG 或写入失败不会替换已有成片。缺少解码器时在 API 请求前报错。
+
 ### 2. 配置 API（仅第三方 API 模式需要）
 
 ```bash
