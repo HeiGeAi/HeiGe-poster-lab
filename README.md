@@ -63,6 +63,8 @@ HeiGe-poster-lab/
 pip install -r requirements.txt
 ```
 
+依赖包括 httpx 与 Pillow。输出只接受静态非隔行 PNG：最多 20 MiB 文件、3200 万像素、128 MiB 解压扫描行数据。结构、CRC、扫描行过滤器及完整像素解码均通过后才原子写入；损坏图片、JPEG/WebP/GIF、动画 PNG 或写入失败不会替换已有成片。缺少解码器时在 API 请求前报错。
+
 ### 2. 配置 API（仅第三方 API 模式需要）
 
 ```bash
@@ -130,3 +132,9 @@ MIT License. Copyright (c) 2026 HeiGeAi (Blake Xu).
 ## 致谢
 
 生图链路参考了 [heige-image](https://github.com/HeiGeAi/heige-image) 的设计。
+
+### Provider isolation and batch validation
+
+CLI options, `HEIGE_POSTER_LAB_*` environment variables and this project’s config select the poster-lab provider family. The `heige-image` environment/config fallback is used only when none of those own-provider settings is present; partial own-provider settings no longer borrow a key, model or endpoint from a different provider. Provide the selected provider’s key explicitly when overriding its endpoint.
+
+Generation and edit batches preflight every output destination before requests. Duplicate paths (including relative and symlink-parent aliases) reject the whole batch rather than overwrite an earlier result. Run offline regressions with `python -m unittest discover -s tests -v`.
