@@ -1,6 +1,7 @@
 import base64
 import struct
 import tempfile
+import unicodedata
 import unittest
 import zlib
 from pathlib import Path
@@ -18,9 +19,58 @@ def png(value=0):
 
 
 class BatchRegressionTests(unittest.TestCase):
+    def test_unicode_aliases_follow_destination_filesystem(self):
+        for module, batch in ((gen, gen.generate_batch), (edit, edit.edit_batch)):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                source = root / "source.png"
+                source.write_bytes(png())
+                composed = "é.png"
+                decomposed = unicodedata.normalize("NFD", composed)
+                probe = root / "é-probe"
+                probe.write_text("probe")
+                equivalent = probe.with_name(unicodedata.normalize("NFD", probe.name)).exists()
+                tasks = [{"prompt": "p", "input": str(source), "output": str(root / name)}
+                         for name in (composed, decomposed)]
+                responses = [httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(png(i)).decode()}]})
+                             for i in range(2)]
+                with patch.object(module, "_request_once", side_effect=responses) as request:
+                    results = batch(tasks, "fake", "https://example.test/v1", "fake", workers=1)
+                if equivalent:
+                    request.assert_not_called()
+                    self.assertTrue(all(not item["success"] for item in results))
+                    self.assertFalse((root / composed).exists())
+                else:
+                    self.assertEqual(request.call_count, 2)
+                    self.assertTrue(all(item["success"] for item in results), results)
+                    self.assertNotEqual((root / composed).read_bytes(), (root / decomposed).read_bytes())
+
+    def test_case_aliases_follow_destination_filesystem(self):
+        for module, batch in ((gen, gen.generate_batch), (edit, edit.edit_batch)):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                source = root / "source.png"
+                source.write_bytes(png())
+                (root / "case-probe").write_text("probe")
+                insensitive = (root / "CASE-PROBE").exists()
+                tasks = [{"prompt": "p", "input": str(source), "output": str(root / name)}
+                         for name in ("A.png", "a.png")]
+                responses = [httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(png(i)).decode()}]})
+                             for i in range(2)]
+                with patch.object(module, "_request_once", side_effect=responses) as request:
+                    results = batch(tasks, "fake", "https://example.test/v1", "fake", workers=1)
+                if insensitive:
+                    request.assert_not_called()
+                    self.assertTrue(all(not item["success"] for item in results))
+                    self.assertFalse((root / "A.png").exists())
+                else:
+                    self.assertEqual(request.call_count, 2)
+                    self.assertTrue(all(item["success"] for item in results), results)
+                    self.assertNotEqual((root / "A.png").read_bytes(), (root / "a.png").read_bytes())
+
     def test_duplicate_and_aliased_outputs_make_no_requests(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             (root / "alias").symlink_to(root, target_is_directory=True)
             for second in (root / "out.png", root / "alias/out.png", root / "sub/../out.png"):
                 for module, batch in ((gen, gen.generate_batch), (edit, edit.edit_batch)):
@@ -37,7 +87,7 @@ class BatchRegressionTests(unittest.TestCase):
     def test_invalid_later_output_prevents_entire_batch(self):
         for module, batch in ((gen, gen.generate_batch), (edit, edit.edit_batch)):
             with tempfile.TemporaryDirectory() as tmp, patch.object(module, "_request_once") as request:
-                tasks = [{"prompt": "p", "input": "unused.png", "output": str(Path(tmp) / name)}
+                tasks = [{"prompt": "p", "input": "unused.png", "output": str(Path(tmp).resolve() / name)}
                          for name in ("ok.png", "bad.jpg")]
                 results = batch(tasks, "fake", "https://example.test", "fake")
                 request.assert_not_called()
@@ -46,7 +96,7 @@ class BatchRegressionTests(unittest.TestCase):
     def test_distinct_outputs_preserve_both_images(self):
         for module, batch in ((gen, gen.generate_batch), (edit, edit.edit_batch)):
             with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                root = Path(tmp).resolve()
                 source = root / "source.png"
                 source.write_bytes(png())
                 tasks = [{"prompt": "p", "input": str(source), "output": str(root / f"{i}.png")} for i in range(2)]
@@ -111,9 +161,9 @@ class ResponseRegressionTests(unittest.TestCase):
         responses = [httpx.Response(200, json=p) for p in payloads] + [httpx.Response(200, text="not json")]
         for module, core in ((gen, gen._generate_core), (edit, edit._edit_core)):
             with tempfile.TemporaryDirectory() as tmp:
-                source = Path(tmp) / "source.png"
+                source = Path(tmp).resolve() / "source.png"
                 source.write_bytes(png())
-                target = Path(tmp) / "out.png"
+                target = Path(tmp).resolve() / "out.png"
                 target.write_bytes(png(5))
                 kwargs = {"prompt": "p", "api_key": "fake", "base_url": "https://example.test", "model": "fake", "output_path": str(target), "max_retries": 0}
                 if module is edit:
@@ -128,7 +178,7 @@ class ResponseRegressionTests(unittest.TestCase):
     def test_worker_exception_keeps_complete_batch_summary(self):
         for module, core_name, batch in ((gen, "_generate_core", gen.generate_batch), (edit, "_edit_core", edit.edit_batch)):
             with tempfile.TemporaryDirectory() as tmp:
-                tasks = [{"prompt": "p", "input": "unused.png", "output": str(Path(tmp) / f"{i}.png")} for i in range(2)]
+                tasks = [{"prompt": "p", "input": "unused.png", "output": str(Path(tmp).resolve() / f"{i}.png")} for i in range(2)]
                 with patch.object(module, core_name, side_effect=[RuntimeError("bad worker"), {"success": True, "path": "ok.png"}]):
                     results = batch(tasks, "fake", "https://example.test", "fake", workers=1)
                 self.assertEqual([r["success"] for r in results], [False, True])
