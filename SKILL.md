@@ -107,7 +107,7 @@ Never call a result “裸眼立体” merely because it uses extruded type. Reg
 pip install -r requirements.txt
 ```
 
-脚本只依赖 `httpx`。`playwright` 不需要，因为裸眼海报走 API 引擎，不走 HTML 渲染。
+脚本依赖 `httpx` 和用于完整 PNG 像素解码的 `Pillow`。`playwright` 不需要，因为裸眼海报走 API 引擎，不走 HTML 渲染。
 
 ### 2. 配置 API
 
