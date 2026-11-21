@@ -10,10 +10,12 @@ from __future__ import annotations
 import io
 import os
 import struct
+import sys
 import tempfile
 import unicodedata
 import zlib
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -203,6 +205,21 @@ def validate_image_response(response, *, max_bytes: int = MAX_IMAGE_BYTES) -> by
     )
 
 
+def validate_download_url(url: str) -> None:
+    """Require a structurally valid HTTPS URL without echoing its contents."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        # urllib validates the port when this property is accessed.
+        port = parts.port
+    except ValueError as exc:
+        raise ImageResponseError("图片下载地址格式无效") from exc
+    if parts.scheme != "https":
+        raise ImageResponseError("图片下载地址必须使用 https")
+    if not host or port == 0:
+        raise ImageResponseError("图片下载地址格式无效")
+
+
 def validate_output_path(output_path: str | Path) -> Path:
     """Validate and prepare a PNG destination before any paid request."""
     try:
@@ -219,7 +236,10 @@ def validate_output_path(output_path: str | Path) -> Path:
     resolved_parent = absolute_parent.resolve(strict=False)
     if resolved_parent != absolute_parent:
         allowed_system_alias = False
-        for alias_name in ("/tmp", "/var/tmp"):
+        aliases = ("/tmp", "/var/tmp")
+        if sys.platform == "darwin":
+            aliases += ("/var/folders",)
+        for alias_name in aliases:
             alias = Path(alias_name)
             try:
                 relative = absolute_parent.relative_to(alias)

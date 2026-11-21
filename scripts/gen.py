@@ -36,7 +36,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import urlparse
 
 try:
     import httpx
@@ -51,6 +50,7 @@ try:
         atomic_write_image,
         validate_image_bytes,
         validate_image_response,
+        validate_download_url,
         validate_output_path,
         preflight_batch_outputs,
     )
@@ -61,6 +61,7 @@ except ImportError:
         atomic_write_image,
         validate_image_bytes,
         validate_image_response,
+        validate_download_url,
         validate_output_path,
         preflight_batch_outputs,
     )
@@ -295,15 +296,6 @@ def _request_once(payload: dict, timeout: int, api_key: str, base_url: str) -> h
         )
 
 
-def _validate_download_url(url: str) -> None:
-    """图片下载只允许 https，拦截明文 http 与 file:// 等 scheme（SSRF 缓解）。"""
-    scheme = urlparse(url).scheme.lower()
-    if scheme != "https":
-        raise ImageResponseError(
-            f"图片下载地址必须使用 https，实际为 {scheme or '（无 scheme）'}://，已拒绝下载"
-        )
-
-
 def _generate_core(
     prompt: str,
     api_key: str,
@@ -395,14 +387,18 @@ def _generate_core(
         return {"success": False, "error": "API 图片字段必须是字符串"}
 
     if image_url:
-        _safe_print(f"{tag} 下载图片 from: {image_url}")
         try:
-            _validate_download_url(image_url)
+            validate_download_url(image_url)
+            _safe_print(f"{tag} 下载图片...")
             with httpx.stream("GET", image_url, timeout=60, follow_redirects=True) as img_resp:
-                _validate_download_url(str(img_resp.url))
+                validate_download_url(str(img_resp.url))
                 img_resp.raise_for_status()
                 image_bytes = validate_image_response(img_resp)
-        except (httpx.HTTPError, ImageResponseError) as e:
+        except httpx.HTTPStatusError as e:
+            return {"success": False, "error": f"图片下载失败: HTTP {e.response.status_code}"}
+        except (httpx.RequestError, httpx.InvalidURL) as e:
+            return {"success": False, "error": f"图片下载失败: {type(e).__name__}"}
+        except ImageResponseError as e:
             return {"success": False, "error": f"图片下载校验失败: {e}"}
     elif b64_data:
         _safe_print(f"{tag} 解码 base64 图片...")
@@ -411,7 +407,7 @@ def _generate_core(
         except (binascii.Error, ValueError, ImageResponseError) as e:
             return {"success": False, "error": f"base64 图片校验失败: {e}"}
     else:
-        return {"success": False, "error": f"API 响应中未找到图片数据: {data}"}
+        return {"success": False, "error": "API 响应中未找到图片数据"}
 
     try:
         out = atomic_write_image(output_path, image_bytes)
@@ -613,9 +609,16 @@ def main():
             sys.exit(1)
 
         for i, t in enumerate(tasks):
+            if not isinstance(t, dict):
+                print(f"错误: 任务 #{i + 1} 必须是 JSON 对象", file=sys.stderr)
+                sys.exit(1)
             if "prompt" not in t or "output" not in t:
                 print(f"错误: 任务 #{i + 1} 缺少必填字段 prompt 或 output", file=sys.stderr)
                 sys.exit(1)
+            for field in ("prompt", "output"):
+                if not isinstance(t[field], str) or not t[field].strip():
+                    print(f"错误: 任务 #{i + 1} 的 '{field}' 必须是非空字符串", file=sys.stderr)
+                    sys.exit(1)
             ar = t.get("aspect_ratio")
             if ar is not None and ar not in VALID_ASPECT_RATIOS:
                 print(
