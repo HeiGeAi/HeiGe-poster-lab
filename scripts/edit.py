@@ -43,6 +43,8 @@ try:
         ImageResponseError,
         OutputPathError,
         atomic_write_image,
+        decode_base64_image,
+        download_image_bytes,
         validate_image_bytes,
         validate_image_response,
         validate_download_url,
@@ -54,6 +56,8 @@ except ImportError:
         ImageResponseError,
         OutputPathError,
         atomic_write_image,
+        decode_base64_image,
+        download_image_bytes,
         validate_image_bytes,
         validate_image_response,
         validate_download_url,
@@ -143,8 +147,9 @@ def _load_config(path: Path) -> dict:
     except OSError:
         pass
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        return loaded if isinstance(loaded, dict) else {}
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return {}
 
 
@@ -294,11 +299,15 @@ def _edit_core(
         return {"success": False, "error": f"输出路径校验失败: {e}"}
 
     if isinstance(input_image, (str, Path)):
-        input_paths = [str(input_image)]
+        input_paths = [str(input_image)] if str(input_image).strip() else []
     elif isinstance(input_image, list):
+        if not all(isinstance(p, (str, Path)) and str(p).strip() for p in input_image):
+            return {"success": False, "error": "input 必须是图片路径或非空路径列表"}
         input_paths = [str(p) for p in input_image]
     else:
         return {"success": False, "error": "input 必须是图片路径或路径列表"}
+    if not input_paths:
+        return {"success": False, "error": "input 不能为空"}
 
     try:
         images = [read_image_bytes(p) for p in input_paths]
@@ -370,15 +379,14 @@ def _edit_core(
     if ((image_url is not None and not isinstance(image_url, str))
             or (b64_data is not None and not isinstance(b64_data, str))):
         return {"success": False, "error": "API 图片字段必须是字符串"}
+    image_url = image_url.strip() if isinstance(image_url, str) else ""
+    b64_data = b64_data.strip() if isinstance(b64_data, str) else ""
 
     if image_url:
         try:
             validate_download_url(image_url)
             _safe_print(f"{tag} 下载图片...")
-            with httpx.stream("GET", image_url, timeout=60, follow_redirects=True) as img_resp:
-                validate_download_url(str(img_resp.url))
-                img_resp.raise_for_status()
-                image_bytes = validate_image_response(img_resp)
+            image_bytes = download_image_bytes(image_url, timeout=60)
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"图片下载失败: HTTP {e.response.status_code}"}
         except (httpx.RequestError, httpx.InvalidURL) as e:
@@ -388,7 +396,7 @@ def _edit_core(
     elif b64_data:
         _safe_print(f"{tag} 解码 base64 图片...")
         try:
-            image_bytes = validate_image_bytes(base64.b64decode(b64_data, validate=True))
+            image_bytes = decode_base64_image(b64_data)
         except (binascii.Error, ValueError, ImageResponseError) as e:
             return {"success": False, "error": f"base64 图片校验失败: {e}"}
     else:
@@ -571,7 +579,7 @@ def main():
             sys.exit(1)
         try:
             tasks = json.loads(batch_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
             print(f"错误: 解析批量任务文件失败: {e}", file=sys.stderr)
             sys.exit(1)
         if not isinstance(tasks, list) or not tasks:
@@ -592,6 +600,16 @@ def main():
                 sys.exit(1)
             if "input" not in t or "prompt" not in t or "output" not in t:
                 print(f"错误: 任务 #{i + 1} 缺少必填字段 input、prompt 或 output", file=sys.stderr)
+                sys.exit(1)
+            inp = t["input"]
+            input_ok = (isinstance(inp, str) and bool(inp.strip())) or (
+                isinstance(inp, list) and bool(inp) and all(isinstance(p, str) and bool(p.strip()) for p in inp)
+            )
+            if not input_ok:
+                print(
+                    f"错误: 任务 #{i + 1} 的 'input' 必须是非空图片路径字符串或非空路径数组",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             for field in ("prompt", "output"):
                 if not isinstance(t[field], str) or not t[field].strip():
