@@ -48,6 +48,8 @@ try:
         ImageResponseError,
         OutputPathError,
         atomic_write_image,
+        decode_base64_image,
+        download_image_bytes,
         validate_image_bytes,
         validate_image_response,
         validate_download_url,
@@ -59,6 +61,8 @@ except ImportError:
         ImageResponseError,
         OutputPathError,
         atomic_write_image,
+        decode_base64_image,
+        download_image_bytes,
         validate_image_bytes,
         validate_image_response,
         validate_download_url,
@@ -157,8 +161,9 @@ def _load_config(path: Path) -> dict:
     except OSError:
         pass
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        return loaded if isinstance(loaded, dict) else {}
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
         return {}
 
 
@@ -385,15 +390,14 @@ def _generate_core(
     if ((image_url is not None and not isinstance(image_url, str))
             or (b64_data is not None and not isinstance(b64_data, str))):
         return {"success": False, "error": "API 图片字段必须是字符串"}
+    image_url = image_url.strip() if isinstance(image_url, str) else ""
+    b64_data = b64_data.strip() if isinstance(b64_data, str) else ""
 
     if image_url:
         try:
             validate_download_url(image_url)
             _safe_print(f"{tag} 下载图片...")
-            with httpx.stream("GET", image_url, timeout=60, follow_redirects=True) as img_resp:
-                validate_download_url(str(img_resp.url))
-                img_resp.raise_for_status()
-                image_bytes = validate_image_response(img_resp)
+            image_bytes = download_image_bytes(image_url, timeout=60)
         except httpx.HTTPStatusError as e:
             return {"success": False, "error": f"图片下载失败: HTTP {e.response.status_code}"}
         except (httpx.RequestError, httpx.InvalidURL) as e:
@@ -403,7 +407,7 @@ def _generate_core(
     elif b64_data:
         _safe_print(f"{tag} 解码 base64 图片...")
         try:
-            image_bytes = validate_image_bytes(base64.b64decode(b64_data, validate=True))
+            image_bytes = decode_base64_image(b64_data)
         except (binascii.Error, ValueError, ImageResponseError) as e:
             return {"success": False, "error": f"base64 图片校验失败: {e}"}
     else:
@@ -592,7 +596,7 @@ def main():
 
         try:
             tasks = json.loads(batch_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
             print(f"错误: 解析批量任务文件失败: {e}", file=sys.stderr)
             sys.exit(1)
 

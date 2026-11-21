@@ -183,3 +183,58 @@ class ResponseRegressionTests(unittest.TestCase):
                     results = batch(tasks, "fake", "https://example.test", "fake", workers=1)
                 self.assertEqual([r["success"] for r in results], [False, True])
                 self.assertEqual([r["index"] for r in results], [0, 1])
+
+    def test_edit_rejects_empty_input_list_before_request_and_in_cli(self):
+        import json
+        import subprocess
+        import sys
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            out = root / "out.png"
+            with patch.object(edit, "_request_once", side_effect=AssertionError("must not call API")):
+                res = edit._edit_core(
+                    input_image=[],
+                    prompt="p",
+                    api_key="fake",
+                    base_url="https://example.test",
+                    model="fake",
+                    output_path=str(out),
+                    max_retries=0,
+                )
+            self.assertFalse(res["success"])
+            self.assertIn("input", res["error"])
+
+            batch = root / "tasks.json"
+            batch.write_text(
+                json.dumps([{"input": [], "prompt": "p", "output": str(out)}]),
+                encoding="utf-8",
+            )
+            script = Path(__file__).resolve().parents[1] / "scripts" / "edit.py"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--batch",
+                    str(batch),
+                    "--api-key",
+                    "unused",
+                    "--base-url",
+                    "http://127.0.0.1:1/v1",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=10,
+            )
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("'input'", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_malformed_config_does_not_crash_load_config(self):
+        for module in (gen, edit):
+            with self.subTest(module=module.__name__), tempfile.TemporaryDirectory() as tmp:
+                cfg_file = Path(tmp) / "config.json"
+                for raw in (b"[]", b"\xff\xfe", b"null"):
+                    cfg_file.write_bytes(raw)
+                    self.assertEqual(module._load_config(cfg_file), {})
